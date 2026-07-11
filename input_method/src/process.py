@@ -30,7 +30,7 @@ def process():
     """
     print('开始处理数据...')
     # 读取数据
-    df = pd.read_json(config.ROW_DATA_DIR / 'synthesized_.jsonl', orient='records', lines=True).sample(frac=0.1)
+    df = pd.read_json(config.ROW_DATA_DIR / 'synthesized_.jsonl', orient='records', lines=True).sample(frac=0.03)
 
     # 抽取句子
     sentences = []
@@ -51,6 +51,12 @@ def process():
             vocab_set.add(word)
     vocab_list = ['<unk>'] + list(vocab_set)
     print(f'词表大小：{len(vocab_list)}')
+
+    # 保存词表
+    with open(config.PROCESSED_DIR / 'vocab.txt', 'w', encoding='utf-8') as f:
+        for word in vocab_list:
+            f.write(word + '\n')
+    print('词表保存完成')
 
     word2index = {word: index for index, word in enumerate(vocab_list)}
 
