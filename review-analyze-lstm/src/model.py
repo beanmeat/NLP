@@ -18,6 +18,6 @@ class ReviewAnalyzeModel(nn.Module):
         # output.shape: [batch_size, seq_len, hidden_size]
         last_hidden = output[:, -1, :]
         # last_hidden.shape: [batch_size, hidden_size]
-        output = self.linear(last_hidden)
-        # output.shape: [batch_size, 1]
+        output = self.linear(last_hidden).squeeze(1)
+        # output.shape: [batch_size]
         return output

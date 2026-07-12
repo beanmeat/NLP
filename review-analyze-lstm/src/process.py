@@ -8,7 +8,7 @@ from tokenizer import JiebaTokenizer
 def process():
     print('开始数据预处理')
     # 读取
-    df = pd.read_csv(config.RAW_DATA_DIR / 'online_shopping_10_cats.csv', usecols=['review', 'label'], encoding='utf-8').sample(frac=0.03)
+    df = pd.read_csv(config.RAW_DATA_DIR / 'online_shopping_10_cats.csv', usecols=['review', 'label'], encoding='utf-8')
 
     # 过滤数据
     df = df.dropna()
