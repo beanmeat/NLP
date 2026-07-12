@@ -1,8 +1,9 @@
-import jieba
 import torch
 
 from input_method.src import config
 from input_method.src.model import InputMethodModel
+from input_method.src.tokenizer import JiebaTokenizer
+
 
 def predict_batch(model, input_tensor):
     """
@@ -20,27 +21,23 @@ def predict_batch(model, input_tensor):
     top5_indexes_list = top5_indexes.tolist()
     return top5_indexes_list
 
-def predict(text,word2index,model,index2word,device):
+def predict(text,model,tokenizer,device):
     # 准备数据
-    index_list = [word2index.get(word, 0) for word in jieba.lcut(text)]
+    index_list = tokenizer.encode(text)
     input_tensor = torch.tensor([index_list], dtype=torch.long).to(device)
     # input_tensor.shape: [batch_size, seq_len]
     top5_indexes_list = predict_batch(model,input_tensor)
-    top5_words = [index2word[index] for index in  top5_indexes_list[0]]
+    top5_words = [tokenizer.index2word[index] for index in  top5_indexes_list[0]]
     return top5_words
 
 def run_predict():
     # 加载资源
     # 设备
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    # 加载词表
-    with open(config.PROCESSED_DIR / 'vocab.txt', 'r', encoding='utf-8') as f:
-        vocab_list = [line[:-1] for line in f.readlines()]
-    print("词表加载完成")
-    word2index = {word: index for index, word in enumerate(vocab_list)}
-    index2word = {index: word for index, word in enumerate(vocab_list)}
+    # 创建tokenizer
+    tokenizer = JiebaTokenizer.from_vocab(config.PROCESSED_DIR / 'vocab.txt')
     # 模型
-    model = InputMethodModel(vocab_size=len(vocab_list)).to(device)
+    model = InputMethodModel(vocab_size=tokenizer.vocab_size).to(device)
     model.load_state_dict(torch.load(config.MODELS_DIR / 'model.pt'))
 
     # ======== 主流程 =========
@@ -53,7 +50,7 @@ def run_predict():
             print("请输入下一个词")
             continue
         history_input += user_input
-        top5_words = predict(history_input,word2index,model,index2word,device)
+        top5_words = predict(history_input,model,tokenizer,device)
         print(top5_words)
 
 if __name__ == '__main__':

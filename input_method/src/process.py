@@ -4,16 +4,17 @@ from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 
 import config
+from input_method.src.tokenizer import JiebaTokenizer
 
 
-def build_dataset(sentences, word2index):
+def build_dataset(sentences, tokenizer):
     """
     构建并保存数据集
     :param sentences: 原始句子列表
-    :param word2index: {word:index}
+    :param tokenizer: 分词器对象
     :return: [{input:[1,2,3,4,5],target:6},{input:[1,2,3,4,5],target:6}]
     """
-    index_sentences = [[word2index.get(word, 0) for word in jieba.lcut(sentence)] for sentence in sentences]
+    index_sentences = [tokenizer.encode(sentence) for sentence in sentences]
     dataset = []
     for sentence in index_sentences:
         # sentence: [1,2,3,4,5,6,7,8,9,10]
@@ -45,28 +46,23 @@ def process():
     print(f'测试集句子数：{len(test_sentences)}')
 
     # 构建词表（用训练集）
-    vocab_set = set()
-    for sentence in tqdm(train_sentences, desc='构建词表'):
-        for word in jieba.lcut(sentence):
-            vocab_set.add(word)
-    vocab_list = ['<unk>'] + list(vocab_set)
-    print(f'词表大小：{len(vocab_list)}')
+    vocab_list = JiebaTokenizer.build_vocab(train_sentences, config.PROCESSED_DIR / 'vocab.txt')
 
-    # 保存词表
-    with open(config.PROCESSED_DIR / 'vocab.txt', 'w', encoding='utf-8') as f:
-        for word in vocab_list:
-            f.write(word + '\n')
-    print('词表保存完成')
-
-    word2index = {word: index for index, word in enumerate(vocab_list)}
+    # 创建tokenizer
+    tokenizer = JiebaTokenizer.from_vocab(config.PROCESSED_DIR / 'vocab.txt')
 
     # 构建训练集
-    train_dataset = build_dataset(train_sentences, word2index)
+    train_dataset = build_dataset(train_sentences, tokenizer)
+
     # 保存训练集
     pd.DataFrame(train_dataset).to_json(config.PROCESSED_DIR / 'index_train.jsonl', lines=True, orient='records')
-    # 构建并保存测试机
-    test_dataset = build_dataset(test_sentences, word2index)
+
+    # 构建并保存测试集
+    test_dataset = build_dataset(test_sentences, tokenizer)
+
+    # 保存测试集
     pd.DataFrame(test_dataset).to_json(config.PROCESSED_DIR / 'index_test.jsonl', lines=True, orient='records')
+
     print('数据处理完成...')
 
 

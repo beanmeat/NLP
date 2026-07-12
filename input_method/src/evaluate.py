@@ -3,6 +3,7 @@ import torch
 from input_method.src import config
 from input_method.src.dataset import get_dataloader
 from input_method.src.model import InputMethodModel
+from input_method.src.tokenizer import JiebaTokenizer
 from predict import predict_batch
 
 def evaluate_model(model, dataloader, device):
@@ -26,12 +27,10 @@ def evaluate_model(model, dataloader, device):
 def run_evaluate():
     # 设备
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    # 词表
-    with open(config.PROCESSED_DIR / 'vocab.txt', 'r', encoding='utf-8') as f:
-        vocab_list = [line[:-1] for line in f.readlines()]
-    print("词表加载完成")
+    # 创建tokenizer
+    tokenizer = JiebaTokenizer.from_vocab(config.PROCESSED_DIR / 'vocab.txt')
     # 模型
-    model = InputMethodModel(vocab_size=len(vocab_list)).to(device)
+    model = InputMethodModel(vocab_size=tokenizer.vocab_size).to(device)
     model.load_state_dict(torch.load(config.MODELS_DIR / 'model.pt'))
 
     # 数据集
