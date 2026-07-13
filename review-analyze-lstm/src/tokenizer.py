@@ -1,6 +1,6 @@
 import jieba
 from tqdm import tqdm
-from input_method.src import config
+import config
 
 
 class JiebaTokenizer:
@@ -59,4 +59,4 @@ class JiebaTokenizer:
 
 if __name__ == '__main__':
     tokenizer = JiebaTokenizer.from_vocab(config.PROCESSED_DIR / 'vocab.txt')
-    print(tokenizer.encode('我喜欢坐地铁'))
+    print(tokenizer.encode('我喜欢坐地铁',config.SEQ_LEN))
