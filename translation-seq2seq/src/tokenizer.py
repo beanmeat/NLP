@@ -50,7 +50,7 @@ class BaseTokenizer:
             if len(word_list) == seq_len - 2:
                 word_list = [self.sos_token] + word_list + [self.eos_token]
             elif len(word_list) < seq_len - 2:
-                word_list = [self.sos_token] + word_list + [self.sos_token] + [self.pad_token] * (seq_len - len(word_list) - 2)
+                word_list = [self.sos_token] + word_list + [self.eos_token] + [self.pad_token] * (seq_len - len(word_list) - 2)
             else:
                 word_list = [self.sos_token] + word_list[:seq_len - 2] + [self.eos_token]
         else:
