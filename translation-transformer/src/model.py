@@ -13,6 +13,7 @@ class PositionEncoding(nn.Module):
             for _2i in range(0, dim_model, 2):
                 pe[pos, _2i] = math.sin(pos / math.pow(10000.0, _2i / dim_model))
                 pe[pos, _2i + 1] = math.cos(pos / math.pow(10000.0, _2i / dim_model))
+            self.register_buffer('pe', pe)
 
     def forward(self, x):
         # x.shape: [batch_size, sql_len, d_model]
