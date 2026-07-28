@@ -338,7 +338,7 @@ Seq2Seq 模型的训练目标，是在给定输入序列的条件下，逐步生
                  if len(word_list) == seq_len - 2:
                      word_list = [self.sos_token] + word_list + [self.eos_token]
                  elif len(word_list) < seq_len - 2:
-                     word_list = [self.sos_token] + word_list + [self.sos_token] + [self.pad_token] * (seq_len - len(word_list) - 2)
+                     word_list = [self.sos_token] + word_list + [self.eos_token] + [self.pad_token] * (seq_len - len(word_list) - 2)
                  else:
                      word_list = [self.sos_token] + word_list[:seq_len - 2] + [self.eos_token]
              else:
@@ -616,12 +616,163 @@ Seq2Seq 模型的训练目标，是在给定输入序列的条件下，逐步生
    - 预测模型
    
      ```python
+     import torch
+     
+     from tokenizer import ChineseTokenizer, EnglishTokenizer
+     import config
+     from model import TranslationEncoder, TranslationDecoder
+     
+     
+     def predict_batch(input_tensor, encoder, decoder, ch_tokenizer, en_tokenizer, device):
+         """
+         批量预测
+         :param input_tensor: 一批中文句子 [batch_size, seq_len]
+         :param encoder:
+         :param decoder:
+         :param ch_tokenizer:
+         :param en_tokenizer:
+         :param device:
+         :return: 一批与之对应的英文句子 [[],[],...]
+         """
+         encoder.eval()
+         decoder.eval()
+         with torch.no_grad():
+             # 编码
+             context_vector = encoder(input_tensor)
+             # context_vector.shape: [batch_size,decoder_hidden_size]
+             # 解码
+             batch_size = input_tensor.shape[0]
+             decoder_input = torch.full((batch_size, 1), en_tokenizer.sos_token_id, device=device)
+             # decoder_input.shape: [batch_size,1]
+             decoder_hidden = context_vector.unsqueeze(0)
+             # decoder_hidden: [1,batch_size,decoder_hidden_size]
+     
+             generated = [[] for _ in range(batch_size)]
+             is_finished = [False for _ in range(batch_size)]
+             for t in range(config.SEQ_LEN):
+                 decoder_output, decoder_hidden = decoder(decoder_input, decoder_hidden)
+                 # decoder_output.shape: [batch_size,1,vocab_size]
+                 predict_indexes = torch.argmax(decoder_output, dim=-1, keepdim=False)
+                 # 处理每个时间步的预测结果
+                 for i in range(batch_size):
+                     if is_finished[i]:
+                         continue
+                     else:
+                         if predict_indexes[i].item() == en_tokenizer.eos_token_id:
+                             is_finished[i] = True
+                         else:
+                             generated[i].append(predict_indexes[i].item())
+                 if all(is_finished):
+                     break
+                 decoder_input = predict_indexes
+             return generated
+     
+     
+     def predict(user_input, encoder, decoder, ch_tokenizer, en_tokenizer, device):
+         # 处理数据
+         index_list = ch_tokenizer.encode(user_input, config.SEQ_LEN)
+         input_tensor = torch.tensor([index_list]).to(device)
+         # input_tensor.shape: (batch_size,seq_len)
+         batch_result = predict_batch(input_tensor, encoder, decoder, ch_tokenizer, en_tokenizer, device)
+         result = batch_result[0]
+         return en_tokenizer.decode(result)
+     
+     
+     def run_predict():
+         # 准备资源
+         # 设备
+         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+         # tokenizer
+         ch_tokenizer = ChineseTokenizer.from_vocab(config.PROCESSED_DIR / 'zh_vocab.txt')
+         en_tokenizer = EnglishTokenizer.from_vocab(config.PROCESSED_DIR / 'en_vocab.txt')
+         # 模型
+         encoder = TranslationEncoder(vocab_size=ch_tokenizer.vocab_size, padding_index=ch_tokenizer.pad_token_id).to(device)
+         encoder.load_state_dict(torch.load(config.MODELS_DIR / 'encoder.pt'))
+         decoder = TranslationDecoder(vocab_size=en_tokenizer.vocab_size, padding_index=en_tokenizer.pad_token_id).to(device)
+         decoder.load_state_dict(torch.load(config.MODELS_DIR / 'decoder.pt'))
+         # 运行测试
+         while True:
+             user_input = input("中文：")
+             if user_input in ['q', 'quit']:
+                 break
+             if user_input.strip() == '':
+                 continue
+             result = predict(user_input, encoder, decoder, ch_tokenizer, en_tokenizer, device)
+             print('英文：' + result)
+     
+     
+     if __name__ == '__main__':
+         run_predict()
      
      ```
    
    - 评估模型
    
      ```python
+     import torch
+     from nltk.translate.bleu_score import corpus_bleu
+     from tqdm import tqdm
+     
+     from tokenizer import ChineseTokenizer, EnglishTokenizer
+     import config
+     from model import TranslationEncoder, TranslationDecoder
+     from dataset import get_dataloader
+     from predict import predict_batch
+     
+     
+     def evaluate(dataloader, encoder, decoder, zh_tokenizer, en_tokenizer, device):
+         references = []  # [[[4,5,6,7]],[[5,6,7,8,9]],[[7,8,9]]]
+         predictions = []  # [[4,5,6,7],[5,6,7,8,9],[7,8,9]]
+     
+         special_tokens = [en_tokenizer.sos_token_id, en_tokenizer.eos_token_id, en_tokenizer.pad_token_id]
+     
+         for inputs, targets in tqdm(dataloader, desc='评估'):
+             inputs = inputs.to(device)
+             # inputs.shape: [batch_size, seq_len]
+     
+             targets = targets.tolist()
+             # 参考译文: [[*,*,*,*,*,*],[*,*,*,*,*,*],[*,*,*,*,*,*]]
+     
+             batch_result = predict_batch(inputs, encoder, decoder, zh_tokenizer, en_tokenizer, device)
+             # 预测译文：batch_result.shape: [[4,6,7],[11,23,45,78,99],[88,99,26,55]...]
+     
+             # 处理预测结果
+             predictions.extend(batch_result)
+     
+             # 获取参考译文
+             references.extend([[[index for index in target if index not in special_tokens]] for target in targets])
+     
+         return corpus_bleu(references, predictions)
+     
+     
+     def run_evaluate():
+         # 准备资源
+         # 设备
+         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+     
+         # tokenizer
+         zh_tokenizer = ChineseTokenizer.from_vocab(config.PROCESSED_DIR / 'zh_vocab.txt')
+         en_tokenizer = EnglishTokenizer.from_vocab(config.PROCESSED_DIR / 'en_vocab.txt')
+     
+         # 模型
+         encoder = TranslationEncoder(vocab_size=zh_tokenizer.vocab_size,
+                                      padding_index=zh_tokenizer.pad_token_id).to(device)
+         encoder.load_state_dict(torch.load(config.MODELS_DIR / 'encoder.pt'))
+     
+         decoder = TranslationDecoder(vocab_size=en_tokenizer.vocab_size,
+                                      padding_index=en_tokenizer.pad_token_id).to(device)
+         decoder.load_state_dict(torch.load(config.MODELS_DIR / 'decoder.pt'))
+     
+         # 加载数据集
+         dataloader = get_dataloader(train=False)
+     
+         bleu = evaluate(dataloader, encoder, decoder, zh_tokenizer, en_tokenizer, device)
+     
+         print(f'Bleu: {bleu}')
+     
+     
+     if __name__ == '__main__':
+         run_evaluate()
      
      ```
    
@@ -644,7 +795,7 @@ Seq2Seq 模型的训练目标，是在给定输入序列的条件下，逐步生
      DECODER_HIDDEN_SIZE = ENCODER_HIDDEN_SIZE * 2
      ENCODER_LAYERS = 1
      LEARNING_RATE = 1e-3
-     EPOCHS = 30
+     EPOCHS = 20
      
      ```
 

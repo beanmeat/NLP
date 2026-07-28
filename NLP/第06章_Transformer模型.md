@@ -757,47 +757,597 @@ PyTorch 已提供了 nn.Transformer 模块，包含完整的编码器-解码器�
    - 数据预处理
 
      ```python
+     import pandas as pd
+     from sklearn.model_selection import train_test_split
+     from tokenizer import EnglishTokenizer, ChineseTokenizer
+     
+     import config
+     
+     
+     def process():
+         print('开始处理数据')
+         # 读取数据
+         df = pd.read_csv(config.RAW_DATA_DIR / 'cmn.txt', sep='\t', header=None, usecols=[0, 1], encoding='utf-8',
+                          names=["en", "zh"])
+     
+         # 过滤数据
+         df = df.dropna()
+         df = df[df['en'].str.strip().ne('') & df['zh'].str.strip().ne('')]
+         # print(df.head())
+     
+         # 划分数据集
+         train_df, test_df = train_test_split(df, test_size=0.2)
+     
+         # 构建词表
+         ChineseTokenizer.build_vocab(train_df['zh'].tolist(), config.PROCESSED_DIR / 'zh_vocab.txt')
+         EnglishTokenizer.build_vocab(train_df['en'].tolist(), config.PROCESSED_DIR / 'en_vocab.txt')
+     
+         # 构建tokenizer对象
+         zh_tokenizer = ChineseTokenizer.from_vocab(config.PROCESSED_DIR / 'zh_vocab.txt')
+         en_tokenizer = EnglishTokenizer.from_vocab(config.PROCESSED_DIR / 'en_vocab.txt')
+     
+         # 计算序列长度（95%分位数）
+         # zh_len = train_df['zh'].apply(lambda x: len(zh_tokenizer.tokenize(x))).max()
+         # en_len = train_df['en'].apply(lambda x: len(en_tokenizer.tokenize(x))).max()
+         # print(zh_len,en_len)
+     
+         # 构建训练集
+         train_df['zh'] = train_df['zh'].apply(lambda x: zh_tokenizer.encode(x, config.SEQ_LEN, add_sos_eos=False))
+         train_df['en'] = train_df['en'].apply(lambda x: en_tokenizer.encode(x, config.SEQ_LEN, add_sos_eos=True))
+         # 保存训练集
+         train_df.to_json(config.PROCESSED_DIR / 'indexed_train.jsonl', orient='records', lines=True)
+         # 构建测试集
+         test_df['zh'] = test_df['zh'].apply(lambda x: zh_tokenizer.encode(x, config.SEQ_LEN, add_sos_eos=False))
+         test_df['en'] = test_df['en'].apply(lambda x: en_tokenizer.encode(x, config.SEQ_LEN, add_sos_eos=True))
+         # 保存测试集
+         test_df.to_json(config.PROCESSED_DIR / 'indexed_test.jsonl', orient='records', lines=True)
+     
+         print('数据处理完成')
+     
+     
+     if __name__ == '__main__':
+         process()
      
      ```
-
+   
    - 自定义分词器
-
+   
      ```python
+     from abc import abstractmethod
      
+     import nltk
+     from nltk import word_tokenize, TreebankWordDetokenizer
+     from tqdm import tqdm
+     
+     
+     class BaseTokenizer:
+         unk_token = '<unk>'
+         pad_token = '<pad>'
+         sos_token = '<sos>'
+         eos_token = '<eos>'
+     
+         def __init__(self, vocab_list):
+             self.vocab_list = vocab_list
+             self.vocab_size = len(vocab_list)
+     
+             self.word2index = {word: index for index, word in enumerate(vocab_list)}
+             self.index2word = {index: word for index, word in enumerate(vocab_list)}
+     
+             self.unk_token_id = self.word2index.get(self.unk_token)
+             self.pad_token_id = self.word2index.get(self.pad_token)
+             self.sos_token_id = self.word2index.get(self.sos_token)
+             self.eos_token_id = self.word2index.get(self.eos_token)
+     
+         @staticmethod
+         @abstractmethod
+         def tokenize(text):
+             """
+             分词抽象方法
+             :param text: 文本
+             :return:
+             """
+             pass
+     
+         @abstractmethod
+         def decode(self, word_ids):
+             """
+             解码抽象方法
+             :param word_ids: 索引
+             :return: 字符串
+             """
+             pass
+     
+     
+         def encode(self, text, seq_len, add_sos_eos=False):
+             word_list = self.tokenize(text)
+     
+             if add_sos_eos:
+                 if len(word_list) == seq_len - 2:
+                     word_list = [self.sos_token] + word_list + [self.eos_token]
+                 elif len(word_list) < seq_len - 2:
+                     word_list = [self.sos_token] + word_list + [self.eos_token] + [self.pad_token] * (seq_len - len(word_list) - 2)
+                 else:
+                     word_list = [self.sos_token] + word_list[:seq_len - 2] + [self.eos_token]
+             else:
+                 # 补齐或截断到指定的seq_len
+                 if len(word_list) > seq_len:
+                     word_list = word_list[0:seq_len]
+                 elif len(word_list) < seq_len:
+                     word_list = word_list + [self.pad_token] * (seq_len - len(word_list))
+     
+             return [self.word2index.get(word, self.unk_token_id) for word in word_list]
+     
+         @classmethod
+         def from_vocab(cls, vocab_file):
+             # 1. 加载词表文件
+             with open(vocab_file, 'r', encoding='utf-8') as f:
+                 vocab_list = [line[:-1] for line in f.readlines()]
+     
+             # 2. 创建tokenizer对象
+             return cls(vocab_list)
+     
+         @classmethod
+         def build_vocab(cls, sentences, vocab_file):
+             # 构建词表（用训练集）
+             vocab_set = set()
+             for sentence in tqdm(sentences, desc='构建词表'):
+                 for word in cls.tokenize(sentence):
+                     if word.strip() != '':  # 去除不可见的token
+                         vocab_set.add(word)
+             vocab_list = [cls.pad_token, cls.unk_token, cls.sos_token, cls.eos_token] + list(vocab_set)
+             print(f'词表大小：{len(vocab_list)}')
+     
+             # 保存词表
+             with open(vocab_file, 'w', encoding='utf-8') as f:
+                 for word in vocab_list:
+                     f.write(word + '\n')
+             print('词表保存完成')
+     
+     
+     class ChineseTokenizer(BaseTokenizer):
+         @staticmethod
+         def tokenize(text):
+             return list(text)
+     
+         def decode(self, word_ids):
+             word_list = [self.index2word[word_id] for word_id in word_ids]
+             return ''.join(word_list)
+     
+     
+     class EnglishTokenizer(BaseTokenizer):
+         @staticmethod
+         def tokenize(text):
+             return word_tokenize(text)
+     
+         def decode(self, word_ids):
+             word_list = [self.index2word[word_id] for word_id in word_ids]
+             return  TreebankWordDetokenizer().detokenize(word_list)
+     
+     
+     if __name__ == '__main__':
+         print(ChineseTokenizer.tokenize("我喜欢乘坐地铁。"))
+         print(EnglishTokenizer.tokenize("I'm happy."))
+         print(EnglishTokenizer.tokenize('I am interested in Japanese history.'))
      ```
-
+   
    - 自定义数据集
-
+   
      ```python
+     import pandas as pd
+     import torch
+     from torch.utils.data import Dataset, DataLoader
+     import config
+     
+     
+     # 1. 定义Dataset
+     class TranslationDataset(Dataset):
+         def __init__(self, data_path):
+             self.data = pd.read_json(data_path, orient='records', lines=True).to_dict(orient='records')
+     
+         def __len__(self):
+             return len(self.data)
+     
+         def __getitem__(self, index):
+             input_tensor = torch.tensor(self.data[index]['zh'], dtype=torch.long)
+             target_tensor = torch.tensor(self.data[index]['en'], dtype=torch.long)
+             return input_tensor, target_tensor
+     
+     
+     # 2. 获取DataLoader得方法
+     def get_dataloader(train=True):
+         data_path = config.PROCESSED_DIR / 'indexed_train.jsonl' if train else config.PROCESSED_DIR / 'indexed_test.jsonl'
+         dataset = TranslationDataset(data_path)
+         return DataLoader(dataset, batch_size=config.BATCH_SIZE, shuffle=True)
+     
+     
+     if __name__ == '__main__':
+         train_dataloader = get_dataloader(train=True)
+         print(f'train batch个数：{len(train_dataloader)}')
+         test_dataloader = get_dataloader(train=False)
+         print(f'test batch个数：{len(test_dataloader)}')
+     
+         for inputs, targets in train_dataloader:
+             print(f'inputs.shape:{inputs.shape}')  # [batch_size, seq_len]
+             print(f'targets.shape:{targets.shape}')  # [batch_size,seq_len]
+             break
      
      ```
-
+   
    - 模型定义
-
+   
      ```python
+     import math
+     
+     import torch
+     from torch import nn
+     import config
+     
+     
+     class PositionEncoding(nn.Module):
+         def __init__(self, dim_model, max_len=100):
+             super().__init__()
+             pe = torch.zeros(max_len, dim_model, dtype=torch.float)
+             for pos in range(max_len):
+                 for _2i in range(0, dim_model, 2):
+                     pe[pos, _2i] = math.sin(pos / math.pow(10000.0, _2i / dim_model))
+                     pe[pos, _2i + 1] = math.cos(pos / math.pow(10000.0, _2i / dim_model))
+                 self.register_buffer('pe', pe)
+     
+         def forward(self, x):
+             # x.shape: [batch_size, sql_len, d_model]
+             seq_len = x.shape[1]
+             pe_part = self.pe[0:seq_len]
+             # pe_part.shape: [seq_len, d_model]
+             x = x + pe_part
+             return x
+     
+     
+     class TranslationModel(nn.Module):
+         def __init__(self, zh_vocab_size, en_vocab_size, zh_padding_index, en_padding_index):
+             super().__init__()
+             self.zh_padding_idx = zh_padding_index
+             self.en_padding_idx = en_padding_index
+     
+             self.src_embedding = nn.Embedding(
+                 num_embeddings=zh_vocab_size,
+                 embedding_dim=config.DIM_MODEL,
+                 padding_idx=zh_padding_index)
+     
+             self.tgt_embedding = nn.Embedding(
+                 num_embeddings=en_vocab_size,
+                 embedding_dim=config.DIM_MODEL,
+                 padding_idx=en_padding_index)
+     
+             self.position_encoding = PositionEncoding(config.DIM_MODEL)
+     
+             self.transformer = nn.Transformer(
+                 d_model=config.DIM_MODEL,
+                 nhead=config.NUM_HEADS,
+                 num_encoder_layers=config.NUM_ENCODER_LAYER,
+                 num_decoder_layers=config.NUM_DECODER_LAYER,
+                 batch_first=True
+             )
+     
+             self.linear = nn.Linear(in_features=config.DIM_MODEL, out_features=en_vocab_size)
+     
+         def encode(self, src, src_pad_mask):
+             # src.shape: [batch_size, sel_len]
+             src_embed = self.src_embedding(src)
+             # src_embed.shape: [batch_size, seq_len, d_model]
+             src_embed = self.position_encoding(src_embed)
+             # src_embed.shape: [batch_size, seq_len, d_model]
+     
+             memory = self.transformer.encoder(src=src_embed, src_key_padding_mask=src_pad_mask)
+             # memory.shape: [batch_size, seq_len, d_model]
+             return memory
+     
+         def decode(self, tgt, memory, tgt_mask, memory_pad_mask, tgt_pad_mask):
+             tgt_embed = self.tgt_embedding(tgt)
+             tgt_embed = self.position_encoding(tgt_embed)
+             # tgt_embed.shape: [batch_size,seq_len,d_model]
+             output = self.transformer.decoder(tgt=tgt_embed,
+                                               memory=memory,
+                                               tgt_mask=tgt_mask,
+                                               tgt_key_padding_mask=tgt_pad_mask,
+                                               memory_key_padding_mask=memory_pad_mask)
+             # output.shape: [batch_size, seq_len, d_model]
+             output = self.linear(output)
+             # output.shape: [batch_size,seq_len,en_vocab_size]
+             return output
+     
+         def forward(self, src, tgt, src_pad_mask, tgt_mask, tgt_pad_mask):
+             memory = self.encode(src, src_pad_mask)
+             output = self.decode(tgt, memory, tgt_mask, src_pad_mask, tgt_pad_mask)
+             return output
+     
+     
+     if __name__ == '__main__':
+         model = TranslationModel(zh_vocab_size=100, en_vocab_size=100, zh_padding_index=0, en_padding_index=0)
+         print(model)
      
      ```
-
+   
    - 模型训练
-
+   
      ```python
+     import time
+     
+     import torch
+     from tqdm import tqdm
+     
+     from tokenizer import ChineseTokenizer, EnglishTokenizer
+     from model import TranslationModel
+     from dataset import get_dataloader
+     from torch.utils.tensorboard import SummaryWriter
+     import config
+     
+     
+     def train_one_epoch(dataloader, model, optimizer, loss_function, device):
+         model.train()
+         epoch_total_loss = 0
+         for inputs, targets in tqdm(dataloader, desc='训练'):
+             inputs = inputs.to(device)
+             # inputs.shape: [batch_size, seq_len]
+             targets = targets.to(device)
+             # targets.shape: [batch_size, seq_len]
+             optimizer.zero_grad()
+     
+             # 解码器输入
+             decoder_input = targets[:, :-1]
+             # decoder_input.shape: [batch_size, tgt_len-1]
+             # 源系列pad mask
+             src_pad_mask = (inputs == model.src_embedding.padding_idx)
+             # 目标系列pad mask
+             tgt_pad_mask = (decoder_input == model.tgt_embedding.padding_idx)
+             # tgt_mask 生成
+             tgt_mask = model.transformer.generate_square_subsequent_mask(decoder_input.shape[1]).to(device)
+             decoder_outputs = model(inputs, decoder_input, src_pad_mask, tgt_mask, tgt_pad_mask)
+             # decoder_outputs.shape: [batch_size, tgt_len-1, en_vocab_size]
+             decoder_targets = targets[:, 1:]
+             # decoder_targets.shape: [batch_size, tgt_len-1]
+             # 计算损失
+             loss = loss_function(decoder_outputs.reshape(-1, decoder_outputs.shape[-1]), decoder_targets.reshape(-1))
+             loss.backward()
+             optimizer.step()
+             epoch_total_loss += loss.item()
+         return epoch_total_loss / len(dataloader)
+     
+     def train():
+         # 选择设备
+         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+         # Tokenizer
+         zh_tokenizer = ChineseTokenizer.from_vocab(config.PROCESSED_DIR / 'zh_vocab.txt')
+         en_tokenizer = EnglishTokenizer.from_vocab(config.PROCESSED_DIR / 'en_vocab.txt')
+     
+         # 模型
+         model = TranslationModel(zh_vocab_size=zh_tokenizer.vocab_size,
+                                  en_vocab_size=en_tokenizer.vocab_size,
+                                  zh_padding_index=zh_tokenizer.pad_token_id,
+                                  en_padding_index=en_tokenizer.pad_token_id).to(device)
+     
+         # 加载数据
+         dataloader = get_dataloader()
+     
+         # 损失函数
+         loss_function = torch.nn.CrossEntropyLoss(ignore_index=en_tokenizer.pad_token_id)
+     
+         # 优化器
+         optimizer = torch.optim.Adam(params=model.parameters(), lr=config.LEARNING_RATE)
+     
+         # tensorboard
+         writer = SummaryWriter(log_dir=config.LOGS_DIR / time.strftime('%Y-%m-%d_%H-%M-%S'))
+     
+         best_loss = float('inf')
+         for epoch in range(1, 1 + config.EPOCHS):
+             print(f'========== Epoch: {epoch} ==========')
+             avg_loss = train_one_epoch(dataloader, model, optimizer, loss_function, device)
+             print(f'Loss: {avg_loss:.4f}')
+     
+             writer.add_scalar('Loss', avg_loss, epoch)
+     
+             if avg_loss < best_loss:
+                 best_loss = avg_loss
+                 torch.save(model.state_dict(), config.MODELS_DIR / 'model.pt')
+                 print('模型保存成功')
+             else:
+                 print('模型无需保存')
+     
+     
+     if __name__ == '__main__':
+         train()
      
      ```
-
+   
    - 预测模型
-
+   
      ```python
+     import torch
+     
+     from tokenizer import ChineseTokenizer, EnglishTokenizer
+     import config
+     from model import TranslationModel
+     
+     
+     def predict_batch(input_tensor, model, zh_tokenizer, en_tokenizer, device):
+         """
+         批量预测
+         :param input_tensor: 一批中文句子 [batch_size, seq_len]
+         :param encoder:
+         :param decoder:
+         :param ch_tokenizer:
+         :param en_tokenizer:
+         :param device:
+         :return: 一批与之对应的英文句子 [[],[],...]
+         """
+         model.eval()
+         with torch.no_grad():
+             # 编码
+             src_pad_mask = (input_tensor == zh_tokenizer.pad_token_id)
+             memory = model.encode(input_tensor, src_pad_mask)
+             # memory.shape: [batch_size, src_len, d_model]
+     
+             # 解码
+             batch_size = input_tensor.shape[0]
+             decoder_input = torch.full((batch_size, 1), en_tokenizer.sos_token_id, device=device)
+             # decoder_input.shape: [batch_size,1]
+     
+             generated = [[] for _ in range(batch_size)]
+             is_finished = [False for _ in range(batch_size)]
+             for t in range(config.SEQ_LEN):
+                 tgt_mask = model.transformer.generate_square_subsequent_mask(decoder_input.shape[1]).to(device)
+                 tgt_pad_mask = (decoder_input == en_tokenizer.pad_token_id)
+                 decoder_outputs = model.decode(decoder_input, memory, tgt_mask, src_pad_mask, tgt_pad_mask)
+                 # decoder_outputs.shape: [batch_size, tgt_len, en_vocab_size]
+     
+                 last_decoder_output = decoder_outputs[:, -1, :]
+                 # last_decoder_output.shape: [batch_size, en_vocab_size]
+     
+                 predict_indexes = torch.argmax(last_decoder_output, dim=-1)
+                 # predict_indexes.shape: [batch_size]
+     
+                 # 处理每个时间步的预测结果
+                 for i in range(batch_size):
+                     if is_finished[i]:
+                         continue
+                     else:
+                         if predict_indexes[i].item() == en_tokenizer.eos_token_id:
+                             is_finished[i] = True
+                         else:
+                             generated[i].append(predict_indexes[i].item())
+     
+                 if all(is_finished):
+                     break
+                 decoder_input = torch.cat([decoder_input, predict_indexes.unsqueeze(1)], dim=1)
+             return generated
+     
+     
+     def predict(user_input, model, zh_tokenizer, en_tokenizer, device):
+         # 处理数据
+         index_list = zh_tokenizer.encode(user_input, config.SEQ_LEN)
+         input_tensor = torch.tensor([index_list]).to(device)
+         # input_tensor.shape: (batch_size,seq_len)
+         batch_result = predict_batch(input_tensor, model, zh_tokenizer, en_tokenizer, device)
+         result = batch_result[0]
+         return en_tokenizer.decode(result)
+     
+     
+     def run_predict():
+         # 准备资源
+         # 设备
+         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+         # tokenizer
+         zh_tokenizer = ChineseTokenizer.from_vocab(config.PROCESSED_DIR / 'zh_vocab.txt')
+         en_tokenizer = EnglishTokenizer.from_vocab(config.PROCESSED_DIR / 'en_vocab.txt')
+         # 模型
+         model = TranslationModel(zh_vocab_size=zh_tokenizer.vocab_size,
+                                  en_vocab_size=en_tokenizer.vocab_size,
+                                  zh_padding_index=zh_tokenizer.pad_token_id,
+                                  en_padding_index=en_tokenizer.pad_token_id).to(device)
+         model.load_state_dict(torch.load(config.MODELS_DIR / 'model.pt'))
+         # 运行测试
+         while True:
+             user_input = input("中文：")
+             if user_input in ['q', 'quit']:
+                 break
+             if user_input.strip() == '':
+                 continue
+             result = predict(user_input, model, zh_tokenizer, en_tokenizer, device)
+             print('英文：' + result)
+     
+     
+     if __name__ == '__main__':
+         run_predict()
      
      ```
-
+   
    - 评估模型
-
+   
      ```python
+     import torch
+     from nltk.translate.bleu_score import corpus_bleu
+     from tqdm import tqdm
+     
+     from tokenizer import ChineseTokenizer, EnglishTokenizer
+     import config
+     from model import TranslationModel
+     from dataset import get_dataloader
+     from predict import predict_batch
+     
+     
+     def evaluate(dataloader, model, zh_tokenizer, en_tokenizer, device):
+         references = []  # [[[4,5,6,7]],[[5,6,7,8,9]],[[7,8,9]]]
+         predictions = []  # [[4,5,6,7],[5,6,7,8,9],[7,8,9]]
+     
+         special_tokens = [en_tokenizer.sos_token_id, en_tokenizer.eos_token_id, en_tokenizer.pad_token_id]
+     
+         for inputs, targets in tqdm(dataloader, desc='评估'):
+             inputs = inputs.to(device)
+             # inputs.shape: [batch_size, seq_len]
+     
+             targets = targets.tolist()
+             # 参考译文: [[*,*,*,*,*,*],[*,*,*,*,*,*],[*,*,*,*,*,*]]
+     
+             batch_result = predict_batch(inputs, model, zh_tokenizer, en_tokenizer, device)
+             # 预测译文：batch_result.shape: [[4,6,7],[11,23,45,78,99],[88,99,26,55]...]
+     
+             # 处理预测结果
+             predictions.extend(batch_result)
+     
+             # 获取参考译文
+             references.extend([[[index for index in target if index not in special_tokens]] for target in targets])
+     
+         return corpus_bleu(references, predictions)
+     
+     
+     def run_evaluate():
+         # 准备资源
+         # 设备
+         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+     
+         # tokenizer
+         zh_tokenizer = ChineseTokenizer.from_vocab(config.PROCESSED_DIR / 'zh_vocab.txt')
+         en_tokenizer = EnglishTokenizer.from_vocab(config.PROCESSED_DIR / 'en_vocab.txt')
+     
+         # 模型
+         model = TranslationModel(zh_vocab_size=zh_tokenizer.vocab_size,
+                                  en_vocab_size=en_tokenizer.vocab_size,
+                                  zh_padding_index=zh_tokenizer.pad_token_id,
+                                  en_padding_index=en_tokenizer.pad_token_id).to(device)
+         model.load_state_dict(torch.load(config.MODELS_DIR / 'model.pt'))
+     
+         # 加载数据集
+         dataloader = get_dataloader(train=False)
+     
+         bleu = evaluate(dataloader, model, zh_tokenizer, en_tokenizer, device)
+     
+         print(f'Bleu: {bleu}')
+     
+     
+     if __name__ == '__main__':
+         run_evaluate()
      
      ```
-
+   
    - 配置文件
-
+   
      ```python
+     from pathlib import Path
+     
+     ROOT_DIR = Path(__file__).parent.parent
+     
+     RAW_DATA_DIR = ROOT_DIR / 'data' / 'raw'
+     PROCESSED_DIR = ROOT_DIR / 'data' / 'processed'
+     LOGS_DIR = ROOT_DIR / 'logs'
+     MODELS_DIR = ROOT_DIR / 'models'
+     
+     DIM_MODEL = 128
+     NUM_HEADS = 4
+     NUM_ENCODER_LAYER = 2
+     NUM_DECODER_LAYER = 2
+     
+     SEQ_LEN = 32
+     BATCH_SIZE = 128
+     LEARNING_RATE = 1e-3
+     EPOCHS = 20
      
      ```
