@@ -357,28 +357,322 @@ print("pooler_output:", outputs.pooler_output.shape)
 
 #### 3.1 概述
 
+datasets 是 Hugging Face 提供的一个轻量级数据处理库，专为自然语言处理任务设计，能够高效地支持模型训练流程中的数据加载与预处理操作。  
+
+它的主要特点包括：  
+
+- 加载方便：支持读取本地文件（如 CSV、JSON），也支持加载在线公开数据集；  
+- 结构清晰：数据集的内部结构类似表格，每条样本由若干字段组成；  
+- 无缝协作：与 `tokenizer` 等 `Hugging Face` 模块高度集成，可直接构造模型输入；  
+- 功能丰富：支持常见的数据处理操作，如批量映射（.map()）、字段筛选、训练/验证集划分（.train_test_split()）等。  
+
+datasets 库的安装命令如下：  
+
+```shell
+pip install datasets
+```
+
 #### 3.2 加载数据集
+
+datasets库提供了统一的接口 load_dataset()，既支持从本地文件加载数据，也支持从 Hugging Face Hub 加载在线开源数据集。
 
 ##### 3.2.1 加载本地数据
 
+load_dataset()支持多种本地文件格式，如 CSV、JSON、Parquet，并允许一次加载一个或多个文件。其基本语法如下：
+
+```python
+from datasets import load_dataset
+
+dataset = load_dataset(format, data_files=路径或字典)
+```
+
+参数说明如下：
+
+| **参数**   | **类型**    | **说明**                                                     |
+| ---------- | ----------- | ------------------------------------------------------------ |
+| format     | str         | 文件格式，常用的包括 "csv"、"json"、"parquet" 等             |
+| data_files | str 或 dict | 文件路径。可传入字符串（加载单个文件）或字典（加载多个文件，如训练数据/测试数据） |
+
+1. 加载多个文件
+
+   ```python
+   from datasets import load_dataset
+   
+   dataset_dict = load_dataset('csv', data_files={
+       'train': './data/train.csv',
+       'test': './data/test.csv'
+   })
+   ```
+
+   此时返回的是一个包含两个Dataset的 DatasetDict，其中每个Dataset称为一个split。
+
+   ```python
+   from datasets import load_dataset
+   
+   dataset_dict = load_dataset('csv', data_files={
+       'train': './data/train.csv',
+       'test': './data/test.csv'
+   })
+   
+   print(dataset_dict)
+   # DatasetDict({
+   #     train: Dataset(...),
+   #     test: Dataset(...)
+   # })
+   ```
+
+2. 加载单个文件
+
+   ```python
+   from datasets import load_dataset
+   
+   dataset_dict = load_dataset('csv', data_files='./data/dataset.csv')
+   ```
+
+   此时返回的也是一个 DatasetDict，其中只包含默认命名为 "train" 的一个Dataset。
+
+   ```python
+   print(dataset_dict)
+   # DatasetDict({
+   #     train: Dataset(...)
+   # })
+   ```
+
 ##### 3.2.2 查看数据集
+
+本节以情感分析案例中的评论数据集为例，演示如何使用  `datasets` 的常用 API 查看数据内容：
+
+1. 获取Dataset
+
+   load_dataset()返回的是一个 DatasetDict对象，可以像字典一样通过键名（如 "train"）访问split。
+
+   ```python
+   from datasets import load_dataset
+   
+   dataset_dict = load_dataset('csv', data_files='data/raw/online_shopping_10_cats.csv')
+   
+   dataset = dataset_dict["train"]
+   ```
+
+   此时 dataset是一个 `Dataset` 对象，表示训练集。
+
+2. 访问样本
+
+   Dataset支持索引和切片操作来访问样本：
+
+   ```python
+   print(dataset[0])  # 单条样本
+   print(dataset[:3]) # 多条样本（注意返回结构）
+   ```
+
+   返回结构说明：
+
+   | **访问方式** | **返回示例**                                                 |
+   | ------------ | ------------------------------------------------------------ |
+   | dataset[0]   | {'review': '很喜欢的一本书', 'label': 1, 'cat': '书籍'}      |
+   | dataset[:3]  | {'review': ['很喜欢的一本书', '内容丰富', '讲解清晰'], 'label': [1, 1, 1], 'cat': ['书籍', '书籍', '书籍']} |
+
+3. 访问某个字段值
+
+   可以进一步通过字段名访问某个字段的值：
+
+   ```python
+   print(dataset[0]['review']) # 第一条样本的 review 字段
+   print(dataset[:3]['review']) # 前三条样本的 review 字段列表
+   ```
 
 ##### 3.2.3 加载在线数据
 
+Hugging Face Hub 提供了大量开源数据集，涵盖文本分类、问答、翻译、摘要等任务，可以在[官网](https://huggingface.co/datasets)浏览与搜索：
+
+![image-20260803190227916](images/image-20260803190227916.png)
+
+每个数据集页面都会提供示例代码，方便直接复制使用：
+
+![image-20260803190329418](images/image-20260803190329418.png)
+
+具体代码如下图所示：
+
+![image-20260803190347250](images/image-20260803190347250.png)
+
+执行上述代码时，数据集会自动从 Hugging Face Hub 下载，并缓存至本地用户目录，默认路径为：`~/.cache/huggingface/datasets/`
+
+后续再次使用时将自动从本地加载，无需联网或重复下载。
+
+加载完成后，返回一个 DatasetDict对象，结构和使用方式与本地数据完全一致。
+
 #### 3.3 预处理数据集
+
+除了加载数据， datasets库还支持常见的数据预处理操作，如编码文本、删除列、过滤样本、划分子集和设置张量格式。本节将逐步介绍这些功能。
 
 ##### 3.3.1 删除列
 
+可通过 .remove_columns() 删除不再需要的字段
+
+```python
+dataset = dataset.remove_columns(["cat"])
+```
+
 ##### 3.3.2 过滤行
+
+可使用 .filter() 筛选符合条件的样本
+
+```python
+dataset = dataset.filter(lambda x: x["review"] is not None and x["review"].strip() != "" and x["label"] in [0, 1])
+```
 
 ##### 3.3.3 划分数据集
 
+可使用 .train_test_split() 将单一数据集划分为训练集和验证集
+
+```python
+dataset_dict = dataset.train_test_split(test_size=0.2)
+
+train_dataset = dataset_dict["train"]
+test_dataset = dataset_dict["test"]
+```
+
 ##### 3.3.4 编码数据
+
+可使用.map()方法与tokenizer配合，将原始文本批量编码为模型可用的输入格式（如 input_ids、attention_mask、token_type_ids等）。
+
+.map()是 datasets 中的核心方法之一，支持对整个数据集中的每一条样本或每一批样本进行统一处理，常用于文本编码（tokenizer）和数据字段换。.map() 方法基本语法如下：
+
+```python
+dataset = dataset.map(function, batched=False, remove_columns=None)
+```
+
+参数说明如下：
+
+| 参数           | 说明                                                        |
+| -------------- | ----------------------------------------------------------- |
+| function       | 要应用到每条样本上的函数（或每批样本上的函数）              |
+| batched        | 是否以“批”为单位处理样本；若为 True，则每次接收一个样本列表 |
+| remove_columns | 是否删除原始列，常用于清理不再需要的字段                    |
+
+以中文 BERT 模型为例，编码流程如下：
+
+```python
+tokenizer = AutoTokenizer.from_pretrained("bert-base-chinese")
+
+def tokenize(example):
+    encoded = tokenizer(
+        example["review"],
+        padding="max_length",
+        truncation=True,
+        max_length=128
+    )
+    example['input_ids'] = encoded['input_ids']
+    example['attention_mask'] = encoded['attention_mask']
+    return example
+
+train_dataset = train_dataset.map(tokenize, batched=True)
+test_dataset = test_dataset.map(tokenize, batched=True)
+```
+
+编码后，数据集中将新增字段如 input_ids 和 attention_mask，可直接用于模型训练。
 
 #### 3.4 保存数据集
 
+处理后的数据可保存到本地，供后续训练或复用，避免重复预处理。 Datasets提供了多种保存方式，适用于不同场景：
+
+| 数据格式 | 保存方法       | 适用对象               |
+| -------- | -------------- | ---------------------- |
+| Arrow    | save_to_disk() | Dataset 或 DatasetDict |
+| CSV      | to_csv()       | 仅限 Dataset           |
+| JSON     | to_json()      | 仅限 Dataset           |
+
 ##### 3.4.1 Arrow格式
+
+Arrow 格式是 Hugging Face 官方推荐的数据持久化方式，既支持单个 Dataset 也支持多个子集的DatasetDict。
+
+1. 保存
+
+   ```python
+   dataset_dict.save_to_disk("./data/processed")
+   ```
+
+   保存后的目录结构示例：
+
+   ```txt
+   processed/
+   ├─ dataset_dict.json
+   ├─ test/
+   │   ├─ data-00000-of-00001.arrow
+   │   ├─ dataset_info.json
+   │   └─ state.json
+   └─ train/
+       ├─ data-00000-of-00001.arrow
+       ├─ dataset_info.json
+       └─ state.json
+   ```
+
+   每个 split（如 train、test）都会单独保存一个 Arrow 文件和相应的元数据。
+
+2. 加载
+
+   ```python
+   from datasets import load_from_disk
+   
+   dataset_dict = load_from_disk("./data/processed")
+   ```
 
 ##### 3.4.2 CSV和JSON格式
 
+如果希望将数据导出为通用格式（如用于可视化或非 Hugging Face 工具使用），可以使用 .to_csv() 或 .to_json()方法。但需注意，这些方法仅适用于单个 Dataset，不支持 DatasetDict
+
+1. 保存
+
+   ```python
+   # csv
+   train_dataset.to_csv("./data/processed/train.csv")
+   
+   # json
+   train_dataset.to_json("./data/processed/train.json")
+   ```
+
+2. 加载
+
+   使用 load_dataset()，指定格式和路径即可重新加载：
+
+   ```python
+   from datasets import load_dataset
+   
+   # 加载 CSV 文件
+   dataset_dict = load_dataset("csv", data_files="./data/processed/train.csv")
+   
+   # 加载 JSON 文件
+   dataset_dict = load_dataset("json", data_files="./data/processed/train.json")
+   ```
+
+   加载后返回一个结构完整的 DatasetDict，可直接用于训练、评估等任务。
+
 #### 3.5 集成Dataloader
+
+经过预处理的datasets.Dataset对象可以直接与PyTorch的DataLoader集成使用。虽然它并非继承自torch.utils.data.Dataset类，但由于实现了__len__()和__getitem__()这两个核心接口，因此能够被DataLoader正确识别并进行批量迭代。
+
+在使用前，需要通过.set_format()方法将指定字段转换为张量格式以适配模型输入。典型配置如下：
+
+```python
+train_dataset.set_format(
+    type="torch", # 指定输出为PyTorch张量
+    columns=["input_ids", "attention_mask", "label"] # 需要转换的字段
+)
+```
+
+需要注意的是：
+
+1. 该方法仅改变通过__getitem__()（即dataset[i]）访问样本时的返回格式，不会修改底层数据存储
+2. 通过columns指定的字段会在访问时自动转换为torch.Tensor类型
+3. 未通过columns指定的字段在访问时将被自动过滤
+
+完成格式设置后，即可创建标准的DataLoader实例
+
+```python
+from torch.utils.data import DataLoader
+
+# 训练集DataLoader
+train_dataloader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+```
+
+此时返回的依然是一个 DatasetDict，通过 ["train"] 即可获取实际的数据内容。
