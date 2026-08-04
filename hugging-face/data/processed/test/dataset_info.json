@@ -11,9 +11,9 @@
       "dtype": "int64",
       "_type": "Value"
     },
-    "inputs_ids": {
+    "input_ids": {
       "feature": {
-        "dtype": "int64",
+        "dtype": "int32",
         "_type": "Value"
       },
       "_type": "List"
