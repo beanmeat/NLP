@@ -217,4 +217,4 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 .idea
-word_represent/data/sgns.weibo.word
+01_word_represent/data/sgns.weibo.word
