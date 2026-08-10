@@ -3,24 +3,24 @@ import time
 import torch
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
+from transformers import AutoTokenizer
 
 import config
 from dataset import get_dataloader
-from tokenizer import JiebaTokenizer
 from model import ReviewAnalyzeModel
 
 
 def train_one_epoch(model, dataloader, loss_function, optimizer, device):
     model.train()
     epoch_total_loss = 0
-    for inputs,targets in tqdm(dataloader,desc='训练'):
-        # inputs.shape: [batch_size, seq_len]
-        # targets.shape: [batch_size]
-        inputs = inputs.to(device)
-        targets = targets.to(device)
+    for batch in tqdm(dataloader, desc='训练'):
+        input_ids = batch['input_ids'].to(device)  # batch_size,seq_len
+        attention_mask = batch['attention_mask'].to(device)  # batch_size,seq_len
+        targets = batch['label'].to(device, dtype=torch.float)  # batch_size
+
         optimizer.zero_grad()
         # 前向传播
-        outputs = model(inputs) # outputs.shape: [batch_size]
+        outputs = model(input_ids, attention_mask)  # outputs.shape: [batch_size]
         # 计算损失
         loss = loss_function(outputs, targets)
         # 反向传播
@@ -31,14 +31,13 @@ def train_one_epoch(model, dataloader, loss_function, optimizer, device):
     return epoch_total_loss / len(dataloader)
 
 
-
 def train():
     # 选择设备
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # Tokenizer
-    tokenizer = JiebaTokenizer.from_vocab(config.PROCESSED_DIR / 'vocab.txt')
+    tokenizer = AutoTokenizer.from_pretrained(str(config.PRETRAINED_MODELS_DIR / 'bert-base-chinese'))
     # 模型
-    model = ReviewAnalyzeModel(vocab_size=tokenizer.vocab_size, padding_index=tokenizer.pad_token_id).to(device)
+    model = ReviewAnalyzeModel().to(device)
     # 数据
     dataloader = get_dataloader()
     # 损失函数

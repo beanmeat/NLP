@@ -29,14 +29,11 @@ def process():
         return {'input_ids': tokenized['input_ids'],'attention_mask': tokenized['attention_mask'],'label': batch['label']}
 
     dataset_dict = dataset_dict.map(tokenize, batched=True, remove_columns=['review'])
-    print(dataset_dict)
+    # print(dataset_dict)
 
     # 保存训练集
-
-    # 构建测试机
-
-    # 保存测试机
-
+    dataset_dict['train'].save_to_disk(config.PROCESSED_DATA_DIR/'train')
+    dataset_dict['test'].save_to_disk(config.PROCESSED_DATA_DIR/'test')
     print('数据预处理完成')
 
 

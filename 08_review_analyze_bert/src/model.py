@@ -1,23 +1,26 @@
 from torch import nn
-
 import config
+from transformers import AutoModel
 
 
 class ReviewAnalyzeModel(nn.Module):
-    def __init__(self, vocab_size, padding_index):
+    def __init__(self, freeze_bert=True):
         super().__init__()
-        self.embedding = nn.Embedding(vocab_size, config.EMBEDDING_DIM, padding_idx=padding_index)
-        self.gru = nn.GRU(input_size=config.EMBEDDING_DIM,hidden_size=config.HIDDEN_SIZE,batch_first=True)
-        self.linear = nn.Linear(config.HIDDEN_SIZE, 1)
+        self.bert = AutoModel.from_pretrained(str(config.PRETRAINED_MODELS_DIR / 'bert-base-chinese'))
+        self.linear = nn.Linear(self.bert.config.hidden_size, 1)
+        if freeze_bert:
+            for param in self.bert.parameters():
+                param.requires_grad = False
 
-    def forward(self, x):
-        # x.shape: [batch_size, seq_len]
-        embed = self.embedding(x)
-        # embed.shape: [batch_size, seq_len, embedding_dim]
-        output, _ = self.gru(embed)
-        # output.shape: [batch_size, seq_len, hidden_size]
-        last_hidden = output[:, -1, :]
-        # last_hidden.shape: [batch_size, hidden_size]
-        output = self.linear(last_hidden).squeeze(1)
+    def forward(self, input_ids, attention_mask):
+        # input_ids: [batch_size,seq_len]
+        # attention_mask: [batch_size,seq_len]
+        outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
+        last_hidden_state = outputs.last_hidden_state
+        # last_hidden_state.shape: [batch_size,seq_len,hidden_size]
+        cls_output = last_hidden_state[:, 0, :]
+        # cls_output.shape: [batch_size,hidden_size]
+
+        output = self.linear(cls_output).squeeze(1)
         # output.shape: [batch_size]
         return output

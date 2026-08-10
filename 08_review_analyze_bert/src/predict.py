@@ -1,29 +1,24 @@
 import torch
+from transformers import AutoTokenizer
 
 import config
-from tokenizer import JiebaTokenizer
 from model import ReviewAnalyzeModel
 
 
-def predict_batch(model, input_tensor):
-    """
-    批量预测
-    :param model: 模型
-    :param input_tensor: 输入张量[batch_size,seq_len]
-    :return: 一批预测结果 [0.5,0.7,0.9]
-    """
+def predict_batch(input_ids,attention_mask,model):
+
     model.eval()
     with torch.no_grad():
-        output = model(input_tensor) # output.shape: [batch_size]
+        output = model(input_ids,attention_mask)
         return torch.sigmoid(output).tolist()
 
 
 def predict(user_input, model, tokenizer, device):
     # 处理输入
-    index_list = tokenizer.encode(user_input,config.SEQ_LEN)
-    input_tensor = torch.tensor([index_list], dtype=torch.long).to(device)
-    # input_tensor.shape: [batch_size, seq_len]
-    batch_result = predict_batch(model,input_tensor)
+    tokenized = tokenizer([user_input],padding='max_length',truncation=True,max_length=config.SEQ_LEN,return_tensors='pt')
+    input_ids = tokenized['input_ids'].to(device)
+    attention_mask = tokenized['attention_mask'].to(device)
+    batch_result = predict_batch(input_ids,attention_mask,model)
     return batch_result[0]
 
 
@@ -31,9 +26,9 @@ def run_predict():
     # 准备资源
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # tokenizer
-    tokenizer = JiebaTokenizer.from_vocab(config.PROCESSED_DIR / 'vocab.txt')
+    tokenizer = AutoTokenizer.from_pretrained(str(config.PRETRAINED_MODELS_DIR / 'bert-base-chinese'))
     # 模型
-    model = ReviewAnalyzeModel(vocab_size=tokenizer.vocab_size, padding_index=tokenizer.pad_token_id).to(device)
+    model = ReviewAnalyzeModel().to(device)
     model.load_state_dict(torch.load(config.MODELS_DIR / 'model.pt'))
 
     while True:
